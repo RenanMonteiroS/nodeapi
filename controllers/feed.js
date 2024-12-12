@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const Post = require('../models/post');
+const User = require('../models/user');
 
 exports.getPosts = (req, res, next) => {
     const page = req.query.page || 1;
@@ -15,8 +16,7 @@ exports.getPosts = (req, res, next) => {
         return Post.find().skip(perPage * (page - 1)).limit(perPage);
     })
     .then(posts => {
-       console.log(posts);
-       res.status(200).json({message: 'Posts fetched', posts: posts, totalItems: totalItems});
+       return res.status(200).json({message: 'Posts fetched', posts: posts, totalItems: totalItems});
     })
     .catch(err => {
         if(!err.statusCode) {
@@ -40,13 +40,12 @@ exports.getPost = (req, res, next) => {
     
     Post.findById(postId)
     .then(post => {
-        console.log(post);
         if(!post) {
             const error = new Error('Post not found.');
             error.statusCode = 404;
             throw error;
         }
-        res.status(200).json({message: 'Post fetched!', post: post});
+        return res.status(200).json({message: 'Post fetched!', post: post});
     })
     .catch(err => {
         if(!err.statusCode) {
@@ -59,6 +58,9 @@ exports.getPost = (req, res, next) => {
 exports.postPosts = (req, res, next) => {
     const title = req.body.title;
     const content = req.body.content;
+
+    let creator;
+
     if(!req.file) {
         const error = new Error('Invalid image');
         error.statusCode = 422;
@@ -74,15 +76,22 @@ exports.postPosts = (req, res, next) => {
         error.statusCode = 422;
         return next(error);
     }
-    const post = new Post({title: title, image: image, content: content, creator: {name: 'Creator'}});
-    console.log(post);
+    const post = new Post({title: title, image: image, content: content, creator: req.userId});
+    
     post.save()
     .then(result => {
-        console.log(result);
-        res.status(201).json({
+        return User.findById(req.userId);
+    })
+    .then(user => {
+        user.posts.push(post);
+        creator = user;
+        return user.save();
+    })
+    .then(result => {
+        return res.status(201).json({
             message: 'Post created with success',
-            post: result
-        })
+            post: post,
+        });
     })
     .catch(err => {
         if(!err.statusCode) {
@@ -122,6 +131,11 @@ exports.editPosts = (req, res, next) => {
             error.statusCode = 404;
             throw error;
         }
+        if(post.creator.toString() !== req.userId) {
+            const error = new Error("You're not the post creator.");
+            error.statusCode = 403;
+            throw error;
+        }
         if(image !== post.image) {
             clearImage(post.image);
         }
@@ -156,12 +170,24 @@ exports.deletePosts = (req, res, next) => {
             throw error;
         }
         clearImage(post.image);
-
-        return Post.deleteOne({_id: postId});
+        if(post.creator.toString() !== req.userId) {
+            const error = new Error("You're not the post creator")
+            error.statusCode = 403;
+            throw error;
+        }
+        deletedPost = post._id;
+        return User.findById(post.creator)
     })
-    .then(result => {
-        return res.status(200).json({message: 'Post ' + postId + ' deleted!'});
+    .then(user => {
+        user.posts.pull(postId)
+        return user.save();
+    })
+    .then(resultUsr => {
+        return Post.deleteOne({_id: postId});    
     }) 
+    .then(resultPost => {
+        return res.status(200).json({message: 'Post ' + postId + ' deleted!'});
+    })
     .catch(err => {
         if(!err.statusCode) {
             err.statusCode = 500;

@@ -5,6 +5,7 @@ const { body } = require('express-validator');
 const User = require('../models/user');
 
 const authController = require('../controllers/auth');
+const isAuth = require('../middleware/is-auth')
 
 router.put('/signup', [
     body('name')
@@ -34,5 +35,13 @@ router.put('/signup', [
 ], authController.signup);
 
 router.post('/login', authController.login);
+
+router.get('/status', isAuth, authController.getUserStatus);
+
+router.patch('/status', isAuth, [
+    body('status')
+    .isLength({min: 1}).withMessage("Status can't be empty")
+    .trim()
+], authController.updateUserStatus);
 
 module.exports = router;
