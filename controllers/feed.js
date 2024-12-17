@@ -2,6 +2,8 @@ const {validationResult} = require('express-validator');
 const fs = require('fs');
 const path = require('path');
 
+const io = require('../socket');
+
 const Post = require('../models/post');
 const User = require('../models/user');
 
@@ -10,7 +12,7 @@ exports.getPosts = async (req, res, next) => {
     const perPage = 2;
     try {
         const totalItems = await Post.find().countDocuments();
-        const posts = await Post.find().populate('creator').skip(perPage * (page - 1)).limit(perPage);
+        const posts = await Post.find().populate('creator').sort({ createdAt: -1 }).skip(perPage * (page - 1)).limit(perPage);
         return res.status(200).json({message: 'Posts fetched', posts: posts, totalItems: totalItems});
     }
     catch(err) {
@@ -69,6 +71,7 @@ exports.postPosts = async (req, res, next) => {
 
         await post.save();
         await user.save();
+        io.getIO().emit('posts', { action: 'create', post: {...post._doc, creator: {_id: user._id, name: user.name} }});
 
         return res.status(201).json({
             message: 'Post created with success',
@@ -95,8 +98,6 @@ exports.editPosts = async (req, res, next) => {
         return next(error);
     }
 
-    const title = req.body.title;
-    const content = req.body.content;
     let image = req.body.image;
     if(req.file) {
         image = req.file.path.replace("\\" ,"/");
@@ -106,16 +107,19 @@ exports.editPosts = async (req, res, next) => {
         error.statusCode = 422;
         throw error;
     }
+    const title = req.body.title;
+    const content = req.body.content;
+    
 
     try {
-        const post = await Post.findById(postId);
+        const post = await Post.findById(postId).populate('creator');
 
         if(!post) {
             const error = new Error('Post not found');
             error.statusCode = 404;
             throw error;
         }
-        if(post.creator.toString() !== req.userId) {
+        if(post.creator._id.toString() !== req.userId) {
             const error = new Error("You're not the post creator.");
             error.statusCode = 403;
             throw error;
@@ -129,6 +133,7 @@ exports.editPosts = async (req, res, next) => {
         post.image = image;
         const result = await post.save();
 
+        io.getIO().emit('posts', { action: 'update', post: result});
         res.status(200).json({
             message: 'Post edited with success',
             post: result,
@@ -173,6 +178,7 @@ exports.deletePosts = async (req, res, next) => {
 
         await Post.deleteOne({_id: postId});
 
+        io.getIO().emit('posts', { action: 'delete', post: postId });
         res.status(200).json({message: 'Post ' + postId + ' deleted!'});
 
     }
